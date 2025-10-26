@@ -55,7 +55,8 @@ IAM Role 구성
 | ------------------------------ | -------------------------------------- |
 | `AmazonS3FullAccess`           | S3 버킷(tfstate, static asset 등) 접근      |
 | `AmazonDynamoDBFullAccess`     | Terraform state lock 테이블 접근            |
-| `AmazonSSMManagedInstanceCore` | Session Manager 접속, Parameter Store 접근 |
+| `AmazonSSMManagedInstanceCore` | Session Manager 접속, Parameter Store 접근  |
+| `AmazonEC2FullAccess`          | EC2(vpc) 접근                               |
 
 
 
