@@ -60,4 +60,57 @@ IAM Role 구성
 
 
 
+# Terraform Free-Tier Lab (VPC + NAT Instance, S3/DynamoDB Backend)
+
+> **목표**  
+> - 한 대의 EC2(개발 워크스테이션)에서 Terraform/Git 작업  
+> - S3 + DynamoDB로 원격 상태 관리  
+> - **NAT Gateway 없이** Free-Tier 친화 VPC 구성 (퍼블릭/프라이빗 서브넷, 라우팅)  
+> - 이후 NAT **인스턴스**로 프라이빗 아웃바운드 인터넷 연결 제공
+
+---
+
+## 폴더 구조
+terraform-free-tier-lab/  
+├─ backend.tf # S3+DynamoDB 백엔드 정의(실제 값은 backend.hcl)  
+├─ main.tf # 루트: VPC 호출 (+ NAT 모듈 연결부)  
+├─ provider.tf # 기본 리전  
+├─ variables.tf # 루트 변수  
+├─ versions.tf # 버전 정책  
+├─ terraform.tfvars # (예시) 환경별 값  
+├─ backend.hcl # ← 커밋 금지(.gitignore) / terraform init -backend-config=backend.hcl  
+├─ .gitignore  
+├─ bootstrap/ # 백엔드(S3/DDB) 부트스트랩 (로컬 상태)  
+│ └─ main.tf  
+└─ modules/ 
+├─ vpc/ # Free-Tier VPC (NAT GW 없음)  
+│ ├─ main.tf  
+│ ├─ variables.tf   
+│ └─ outputs.tf  
+└─ ec2-nat/ # NAT 인스턴스 모듈  
+├─ main.tf  
+├─ variables.tf  
+└─ outputs.tf  
+
+---
+
+## 선행 조건
+- 워크스테이션 EC2에 **IAM Role(Instance Profile)** 연결  
+  - 최소: S3/DynamoDB(tfstate), VPC/EC2/라우팅 생성 권한  
+- `backend.hcl` (커밋 금지) 예시:
+  ```hcl
+  bucket         = "free-tier-lab-tfstate-<unique>"
+  key            = "dev/terraform.tfstate"
+  region         = "ap-northeast-2"
+  dynamodb_table = "tfstate-lock"
+  encrypt        = true
+
+
+# 최초 또는 백엔드 재구성 시
+terraform init -backend-config=backend.hcl -reconfigure
+
+# 계획/적용
+terraform plan  
+terraform apply -auto-approve  
+
 
