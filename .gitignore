@@ -1,9 +1,21 @@
+# Terraform
 .terraform/
-.terraform.lock.hcl
+.terraform.lock.hcl      # ← (참고) 보안문제는 없는데, 팀/재현성 위해 '커밋' 권장
 terraform.tfstate
 terraform.tfstate.backup
+terraform.tfstate.d/
+crash.log
+*.tfplan
+
+# 민감/개인 파일
 *.tfvars
-.vscode/
-.idea/
-.DS_Store
+*.auto.tfvars
+backend.hcl
+*.pem
+*.ppk
+*.key
+*.csr
+*.crt
+.env
+*.log
 
