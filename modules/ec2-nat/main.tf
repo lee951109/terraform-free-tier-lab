@@ -22,15 +22,15 @@ data "aws_ami" "al2" {
   owners      = ["amazon"]
 
   filter {
-    name  = "name"
-    value = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
   }
 }
 
 # NAT 인스턴스 보안그룹
 # - 아웃바운드: 전체 허용 (프라이빗에서 나가는 트래픽 NAT)
 # - 인바운드: 기본 차단, SSH 허용을 원할 때만 CIDR로 열기
-resourc "aws_security_group" "nat" {
+resource "aws_security_group" "nat" {
   name        = "${var.name}-nat-sg"
   description = "Security group for NAT instance"
   vpc_id      = var.vpc_id
@@ -54,7 +54,7 @@ resourc "aws_security_group" "nat" {
 resource "aws_vpc_security_group_ingress_rule" "nat_ssh" {
   count = length(var.ssh_cidr_blocks) > 0 ? 1 : 0
 
-  security_group_id = aws.security_group_nat.id
+  security_group_id = aws_security_group.nat.id
   description       = "Optional SSH access to NAT instance"
   ip_protocol       = "tcp"
   from_port         = 22
@@ -147,9 +147,8 @@ resource "aws_route" "private_default_via_nat" {
   for_each               = var.private_route_table_ids
   route_table_id         = each.value
   destination_cidr_block = "0.0.0.0/0"
-  instance_id            = aws_instance.nat.id
+  network_interface_id   = aws_instance.nat.primary_network_interface_id
 }
-
 
 
 

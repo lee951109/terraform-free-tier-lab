@@ -11,14 +11,14 @@ variable "vpc_id" {
 }
 
 # NAT 인스턴스를 배치할 퍼블릭 서브넷 ID( 보통 module.vpc.public_subnet_ids[0])
-variable "putblic_subnet_id" {
+variable "public_subnet_id" {
   type        = string
   description = "NAT 인스턴스가 위치할 퍼블릭 서브넷 ID"
 }
 
 # 프라이빗 라우트 테이블 ID 매핑(인덱스 -> RT ID)
 # module.vpc.private_route_table_ids 를 그대로 입력
-variable "private_rout_table_ids" {
+variable "private_route_table_ids" {
   type        = map(string)
   description = "프라이빗 라우트 테이블 ID 매핑(인덱스→RT ID)"
 }
