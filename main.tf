@@ -42,8 +42,34 @@ module "web" {
   instance_type         = "t3.micro"
   key_name              = "" # SSH 필요시 입력
   instance_profile_name = "" # SSM 사용시 입력
+  param_path_prefix     = module.param.path_prefix
   tags                  = var.common_tags
 }
+
+# -----------------------
+# Parameter 모듈
+# -----------------------
+module "param" {
+  source      = "./modules/ssm-parameter"
+  path_prefix = "/apps/free-tier"
+  parameters = {
+    app_name   = { value = "FreeTierLab" }
+    app_env    = { value = "dev" }
+    app_banner = { value = "Hello from parameter Store" }
+  }
+
+  tags = var.common_tags
+}
+
+#EC2가 Parameter 읽고 SSM 접속할 IAM Instance Profile
+module "iam_ec2_ssm" {
+  source                    = "./modules/iam-ec2-ssm"
+  name                      = "free-tier"
+  ssm_parameter_path_prefix = module.param.path_prefix
+  kms_key_arns              = [] # SecureString 사용 시 키 ARN 넣기
+  tags                      = var.common_tags
+}
+
 
 # -----------------------
 # 출력(확인용)
@@ -51,19 +77,21 @@ module "web" {
 output "vpc_id" {
   value = module.vpc.vpc_id
 }
-
 output "nat_instance_id" {
- value = module.nat.nat_instance_id
+  value = module.nat.nat_instance_id
 }
-
 output "nat_public_ip" {
   value = module.nat.nat_public_ip
 }
-
 output "web_instance_id" {
   value = module.web.web_instance_id
 }
 output "web_public_ip" {
   value = module.web.web_public_ip
 }
-
+output "param_path_prefix" {
+  value = module.param.path_prefix
+}
+output "web_instance_profile" {
+  value = module.iam_ec2_ssm.instance_profile_name
+}

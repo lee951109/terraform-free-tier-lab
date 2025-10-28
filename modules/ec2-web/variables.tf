@@ -37,5 +37,9 @@ variable "tags" {
   default     = {}
 }
 
-
+variable "param_path_prefix" {
+  description = "SSM Parameter Store 경로 prefix(예: /apps/free-tier)"
+  type        = string
+  default     = "" # 빈 값이면 패치 로직이 실패하므로 반드시 채워야함.
+}
 

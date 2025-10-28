@@ -56,15 +56,8 @@ resource "aws_security_group" "web" {
 
 # user_data: Nginx 자동설치 및 index.html 배포
 locals {
-  web_user_data = <<-EOT
-    #!/bin/bash
-    set -euxo pipefail
-    yum update -y
-    amazon-linux-extras install nginx1 -y
-    systemctl enable nginx
-    echo "<h1>Hello from Terraform Web Server</h1>" > /usr/share/nginx/html/index.html
-    systemctl start nginx
-  EOT
+  # 템플릿 파일 경로
+  web_user_data = templatefile("${path.module}/scripts/bootstrap_web.sh", { PARAM_PATH_PREFIX = var.param_path_prefix })
 }
 
 # EC2 Web Instance
