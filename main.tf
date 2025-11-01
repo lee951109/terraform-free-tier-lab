@@ -36,39 +36,114 @@ module "nat" {
 module "web" {
   source = "./modules/ec2-web"
 
-  name                  = "free-tier"
-  vpc_id                = module.vpc.vpc_id
-  public_subnet_id      = module.vpc.public_subnet_ids[0]
-  instance_type         = "t3.micro"
-  key_name              = "" # SSH 필요시 입력
-  instance_profile_name = "" # SSM 사용시 입력
-  param_path_prefix     = module.param.path_prefix
-  tags                  = var.common_tags
-}
+  name             = "free-tier"
+  vpc_id           = module.vpc.vpc_id
+  public_subnet_id = module.vpc.public_subnet_ids[0]
 
-# -----------------------
-# Parameter 모듈
-# -----------------------
-module "param" {
-  source      = "./modules/ssm-parameter"
-  path_prefix = "/apps/free-tier"
-  parameters = {
-    app_name   = { value = "FreeTierLab" }
-    app_env    = { value = "dev" }
-    app_banner = { value = "Hello from parameter Store" }
-  }
+  # Free-Tier 외부 curl 점검용 설정
+  associate_public_ip   = true
+  create_security_group = true
+  enable_ssh            = false # SSM만 쓸 거면 false 권장
+
+  # EC2 / IAM
+  instance_type = "t2.micro"
+  # 인스턴스 프로파일이 있으면 아래 한 줄 유지, 없으면 빈 문자열로 ""
+  instance_profile_name = aws_iam_instance_profile.web.name
+
+  # SSM Parameter Store 경로 및 자동재적용 주기
+  param_path_prefix  = "/apps/free-tier"
+  param_refresh_cron = "*/10 * * * *"
+
+  # 점검 및 페이지 렌더
+  enable_healthz  = true
+  healthz_path    = "/healthz"
+  render_app_page = true
+  app_title       = "Free-Tier Web"
 
   tags = var.common_tags
 }
 
-#EC2가 Parameter 읽고 SSM 접속할 IAM Instance Profile
-module "iam_ec2_ssm" {
-  source                    = "./modules/iam-ec2-ssm"
-  name                      = "free-tier"
-  ssm_parameter_path_prefix = module.param.path_prefix
-  kms_key_arns              = [] # SecureString 사용 시 키 ARN 넣기
-  tags                      = var.common_tags
+# -----------------------
+# IAM (최소 권한 예시)
+# -----------------------
+data "aws_iam_policy_document" "web_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
 }
+
+resource "aws_iam_role" "web" {
+  name               = "free-tier-web-role"
+  assume_role_policy = data.aws_iam_policy_document.web_assume.json
+  tags               = var.common_tags
+}
+
+# SSM Parameter Store & (옵션) KMS Decrypt
+data "aws_iam_policy_document" "web_inline" {
+  statement {
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:DescribeParameters",
+    ]
+    resources = ["*"] # 데모: 와일드카드. 운영은 경로/KMS 키로 최소화
+  }
+
+  # 암호화 파라미터 사용 시 KMS 추가
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContextKeys"
+      values   = ["aws:ssm:parameter-name"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "web_inline" {
+  name   = "free-tier-web-ssm"
+  role   = aws_iam_role.web.id
+  policy = data.aws_iam_policy_document.web_inline.json
+}
+
+resource "aws_iam_instance_profile" "web" {
+  name = "free-tier-web-instance-profile"
+  role = aws_iam_role.web.name
+  tags = var.common_tags
+}
+
+# --------------------------------------------------------------------
+# SSM Session Manager 권한 정책 추가 (EC2에서 SSM 접속 가능하도록)
+# --------------------------------------------------------------------
+data "aws_iam_policy_document" "web_ssm" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "ssm:UpdateInstanceInformation",
+      "ssm:DescribeInstanceInformation",
+      "ssm:SendCommand",
+      "ssm:StartSession",
+      "ssm:ResumeSession",
+      "ssm:TerminateSession",
+      "ec2messages:*",
+      "ssmmessages:*"
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "web_ssm" {
+  name   = "free-tier-web-ssm-session"
+  role   = aws_iam_role.web.id
+  policy = data.aws_iam_policy_document.web_ssm.json
+}
+
 
 
 # -----------------------
@@ -88,10 +163,4 @@ output "web_instance_id" {
 }
 output "web_public_ip" {
   value = module.web.web_public_ip
-}
-output "param_path_prefix" {
-  value = module.param.path_prefix
-}
-output "web_instance_profile" {
-  value = module.iam_ec2_ssm.instance_profile_name
 }

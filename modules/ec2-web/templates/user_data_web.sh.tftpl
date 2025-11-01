@@ -1,0 +1,116 @@
+#!/bin/bash
+# --------------------------------------------------
+# EC2 UserData (AL2 / AL2023 호환)
+# - Nginx 설치/기동
+# - SSM Parameter Store 값 주입 -> /etc/profile.d/app_env.sh
+# - index.html 렌더(옵션)
+# - /healthz 엔드포인트(옵션)
+# - cron: 파라미터 주기적 재적용 (기본 10분)
+# --------------------------------------------------
+
+set -euxo pipefail
+
+# ---------- 패키지 ----------
+if command -v dnf >/dev/null 2>&1; then
+  dnf -y update || true
+  dnf -y install nginx jq awscli cronie
+  systemctl enable --now crond || true
+else
+  yum update -y
+  amazon-linux-extras install nginx1 -y || true
+  yum install -y nginx jq awscli cronie || true
+  systemctl enable --now crond || true
+fi
+
+# ---------- nginx ----------
+systemctl enable --now nginx || systemctl start nginx || true
+
+# ---------- SSM 파라미터 ----------
+PARAM_PATH="${param_path_prefix}"
+mkdir -p /opt/app
+
+aws ssm get-parameters-by-path \
+  --path "$${PARAM_PATH}" \
+  --with-decryption \
+  --query 'Parameters[].{Name:Name,Value:Value}' \
+  --output json > /opt/app/params.json || echo "WARN: SSM fetch failed for $${PARAM_PATH}" >&2
+
+# 환경파일 생성
+echo "# generated from SSM $${PARAM_PATH}" > /etc/profile.d/app_env.sh
+if [ -s /opt/app/params.json ]; then
+  for row in $(jq -c '.[]' /opt/app/params.json 2>/dev/null || true); do
+    NAME=$(echo "$${row}" | jq -r '.Name' | awk -F'/' '{print toupper($$NF)}')
+    VAL=$(echo "$${row}" | jq -r '.Value')
+    echo "export $${NAME}=\"$${VAL}\"" >> /etc/profile.d/app_env.sh
+  done
+fi
+chmod 644 /etc/profile.d/app_env.sh || true
+# shellcheck disable=SC1091
+source /etc/profile.d/app_env.sh || true
+
+%{ if render_app_page ~}
+# ---------- index.html ----------
+# 변수 확장을 위해 따옴표 없는 heredoc
+cat >/usr/share/nginx/html/index.html <<HTML
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>${app_title}</title></head>
+<body>
+  <h1>${app_title} 🎉</h1>
+  <p>APP_NAME: $${APP_NAME:-unset}</p>
+  <p>APP_ENV: $${APP_ENV:-unset}</p>
+  <p>APP_BANNER: $${APP_BANNER:-unset}</p>
+</body>
+</html>
+HTML
+%{ endif ~}
+
+%{ if enable_healthz ~}
+# ---------- /healthz ----------
+cat >/etc/nginx/conf.d/healthz.conf <<NGINX
+server {
+  listen 80 default_server;
+  server_name _;
+  location = ${healthz_path} {
+    add_header Content-Type text/plain;
+    return 200 "ok";
+  }
+  location / {
+    root   /usr/share/nginx/html;
+    index  index.html;
+  }
+}
+NGINX
+%{ endif ~}
+
+# Nginx 설정 적용
+nginx -t && systemctl reload nginx || true
+
+# ---------- 파라미터 재적용 스크립트 ----------
+cat >/usr/local/bin/fetch-params.sh <<'SH'
+#!/bin/bash
+set -euo pipefail
+: "$${PARAM_PATH:?Set PARAM_PATH environment variable}"
+
+aws ssm get-parameters-by-path \
+  --path "$${PARAM_PATH}" \
+  --with-decryption \
+  --query 'Parameters[].{Name:Name,Value:Value}' \
+  --output json > /opt/app/params.json
+
+echo "# generated from SSM $${PARAM_PATH}" > /etc/profile.d/app_env.sh
+for row in $(jq -c '.[]' /opt/app/params.json); do
+  NAME=$(echo "$${row}" | jq -r '.Name' | awk -F'/' '{print toupper($$NF)}')
+  VAL=$(echo "$${row}" | jq -r '.Value')
+  echo "export $${NAME}=\"$${VAL}\"" >> /etc/profile.d/app_env.sh
+done
+chmod 644 /etc/profile.d/app_env.sh
+SH
+chmod +x /usr/local/bin/fetch-params.sh
+
+# ---------- cron 등록 ----------
+CRON_LINE="${param_refresh_cron} root PARAM_PATH=\"$${PARAM_PATH}\" /usr/local/bin/fetch-params.sh && nginx -t && systemctl reload nginx || true"
+echo "$${CRON_LINE}" >/etc/cron.d/param-refresh
+chmod 644 /etc/cron.d/param-refresh
+systemctl restart crond || true
+
