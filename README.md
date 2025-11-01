@@ -30,41 +30,40 @@ WEB --> DDB
 ```
 
 🎯 구성 목표
-- EC2(개발 워크스테이션) 한 대에서 Terraform/Git 작업 수행
-- S3 + DynamoDB로 원격 상태 관리 (tfstate + state lock)
-- NAT Gateway 없이 Free-Tier로 유지 가능한 VPC 설계
-- 퍼블릭/프라이빗 서브넷 및 라우팅 구조 학습
-- NAT 인스턴스를 이용한 프라이빗 아웃바운드 연결 구성
+- Terraform으로 완전 자동화된 인프라 프로비저닝
+- Free-Tier 환경에서 NAT Gateway 없이 VPC 완전 구성
+- S3 + DynamoDB를 통한 Terraform 상태 원격 관리
+- Parameter Store를 통한 설정 중앙 관리
+- Session Manager(SSM) 로 SSH 없이 서버 운영
 
 📂 폴더 구조
 terraform-free-tier-lab/  
-├─ backend.tf                  # S3+DynamoDB 백엔드 정의(backend.hcl에서 로드)  
-├─ main.tf                     # 루트: VPC 모듈 호출 + NAT 모듈 연결  
-├─ provider.tf                 # 기본 리전  
-├─ variables.tf                # 루트 변수 정의   
-├─ versions.tf                 # Terraform/AWS Provider 버전 정책  
-├─ terraform.tfvars            # (예시) 환경별 값  
-├─ backend.hcl                 # ← 커밋 금지(.gitignore)  
-├─ .gitignore  
-├─ bootstrap/                  # 백엔드(S3/DDB) 부트스트랩 (로컬 상태)  
-│  └─ main.tf  
-└─ modules/  
-   ├─ vpc/                     # Free-Tier VPC (NAT GW 없음)  
-   │  ├─ main.tf  
-   │  ├─ variables.tf  
-   │  └─ outputs.tf  
-   └─ ec2-nat/                 # NAT 인스턴스 모듈  
-      ├─ main.tf  
-      ├─ variables.tf  
-      └─ outputs.tf  
+├── backend.tf                  # S3+DynamoDB 백엔드 선언  
+├── backend.hcl                 # Backend 설정값 (bucket, table 등)  
+├── main.tf                     # 루트 모듈 연결 (VPC, EC2, IAM 등)  
+├── provider.tf                 # AWS Provider, 리전/프로필 설정  
+├── variables.tf                # 루트 변수 정의  
+├── versions.tf                 # Terraform / AWS Provider 버전 제약  
+├── terraform.tfvars            # 환경 변수 값 (예: dev, prod)  
+├── bootstrap/                  # 원격 백엔드 부트스트랩 (로컬 실행)  
+│   └── main.tf  
+└── modules/  
+    ├── vpc/                    # Step1: Free-Tier VPC 구성  
+    ├── ec2-nat/                # Step2: NAT 인스턴스  
+    ├── iam-ec2-ssm/            # Step3: EC2용 IAM Role/Instance Profile  
+    ├── ec2-web/                # Step3: Nginx 웹 서버 자동화  
+    ├── dynamodb-tfstate/       # Step4: Terraform state lock용 DDB 테이블  
+    ├── s3-static/              # Step5: 정적 웹 호스팅용 (옵션)  
+    └── ssm-parameter/          # Step3: SSM Parameter Store 값 관리 (옵션)  
+
 
 🔑 선행 조건
-- 워크스테이션 EC2에 IAM Role(Instance Profile) 연결
-   - 최소 권한:
-     - AmazonS3FullAccess (tfstate 버킷)
-     - AmazonDynamoDBFullAccess (state lock)
-     - AmazonEC2FullAccess (VPC/서브넷/라우팅 생성)
-     - AmazonSSMManagedInstanceCore (SSM 접속 및 Parameter Store)
+- Terraform 실행은 AWS EC2 워크스테이션(Amazon Linux)에서 수행
+   - EC2에 아래 IAM Role(Instance Profile) 부여:
+     - ```AmazonS3FullAccess``` — tfstate 버킷 관리
+     - ```AmazonDynamoDBFullAccess``` — state lock 관리
+     - ```AmazonEC2FullAccess``` — EC2, VPC 리소스 생성
+     - ```AmazonSSMManagedInstanceCore``` — Session Manager 접속 및 Parameter Store 접근
     
 ### 🎯 프로젝트 목적
 
@@ -78,12 +77,13 @@ Terraform IaC로 **안정적이고 재현 가능한 클라우드 인프라를 �
 
 ---
 
-### 🧱 Step 0 – Terraform 환경 구성 (EC2 Workstation)
+### 🧱 Step 0 – Terraform 워크스테이션 설정
 
-| 구분 | 내용 |
-|------|------|
-| **설명** | Windows → AWS EC2(Amazon Linux) 원격 접속 후, 해당 EC2를 Terraform 개발 워크스테이션으로 구성 |
-| **이유(WHY)** | - 동일 AWS 네트워크 내에서 Terraform 명령을 실행하여 자격 증명과 접근 제어 간소화<br>- Access Key 파일 저장 불필요 → 보안 강화<br>- 모든 설정이 일관된 환경에서 반복 가능 → IaC 환경에 적합 |
+| 구분           | 내용                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **설명**       | 로컬 PC 대신 Amazon Linux EC2를 Terraform 개발 환경으로 사용                                            |
+| **이유 (WHY)** | - 동일 리전 내에서 Terraform 실행 → 자격증명 간소화<br>- Access Key 저장 불필요 → 보안 강화<br>- 모든 구성의 재현성과 일관성 보장 |
+
 
 ---
 
@@ -116,14 +116,24 @@ Terraform IaC로 **안정적이고 재현 가능한 클라우드 인프라를 �
 
 ---
 
-### 🧩 Step 3 – NAT Instance + Web Server 모듈
+### 🧩 Step 3 – EC2 Web Server (Nginx + SSM Parameter Store)
 
-| 구성 요소 | 설명 |
-|------------|------|
-| **NAT Instance** | 퍼블릭 서브넷에 EC2 배치 → IP 포워딩 + iptables MASQUERADE 설정으로 프라이빗 서브넷 아웃바운드 트래픽 처리 |
-| **Web Server (Nginx)** | 퍼블릭 서브넷 EC2 → user_data 스크립트로 자동 설치, 부팅 즉시 웹 페이지 응답 |
-| **라우팅 구조** | - Public RT: `0.0.0.0/0 → IGW` (양방향 인터넷 연결)<br>- Private RT: `0.0.0.0/0 → NAT ENI` (아웃바운드 전용 연결) |
-| **이유(WHY)** | - **Free-Tier 비용 절감**: NAT Gateway 대신 t3.micro 인스턴스 활용<br>- **학습 가치**: L3 포워딩, SNAT 개념을 직접 실습<br>- **자동화 원칙**: user_data로 수동 SSH 없이 부팅 시 자동 구성(Nginx 설치, index.html 생성) |
-| **결과** | 브라우저에서 `http://<web_public_ip>` 접속 시 → “Hello from Terraform Web Server” 출력 확인 성공 |
+| 구분           | 내용                                                                                                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **설명**       | EC2 인스턴스 부팅 시 user_data로 Nginx 설치 및 Parameter Store 값 반영                                                                                                                                 |
+| **핵심 구성 요소** | - `modules/ec2-web/` : Nginx 설치/기동 및 index.html 생성<br>- `modules/iam-ec2-ssm/` : EC2에 IAM Role/Instance Profile 부여 (SSM 접근 허용)<br>- `modules/ssm-parameter/` : Parameter Store 값 관리 (옵션) |
+| **자동화 동작**   | ① EC2 부팅 → ② user_data 실행 → ③ SSM Parameter Store에서 환경값 로드 → ④ index.html 생성 → ⑤ Nginx 시작                                                                                                |
+| **결과 확인**    | `curl http://<EC2_PUBLIC_IP>` → “Hello from Terraform Web Server” 출력 성공                                                                                                                  |
+| **이유 (WHY)** | - **코드 외부 구성값 관리**: 환경변수를 Parameter Store에서 주입<br>- **보안 강화**: SSH 차단 + SSM Session Manager 운영<br>- **운영 자동화**: 부팅 시 완전 자동 구성 (수동 설정 없음)                                                 |
+
 
 ---
+
+### 🧠 Step별 핵심 학습 포인트
+| Step | 주제      | 주요 학습 포인트                                   |
+| ---- | ------- | ------------------------------------------- |
+| 0    | 환경 구성   | AWS CLI, Terraform 설치, IAM Profile 인증 구조    |
+| 1    | 네트워크 기초 | CIDR, Subnet, Routing, IGW 개념               |
+| 2    | NAT 설계  | IP 포워딩, SNAT, 아웃바운드 라우팅                     |
+| 3    | 웹 자동화   | user_data, SSM Parameter Store, IAM Role 연동 |
+
