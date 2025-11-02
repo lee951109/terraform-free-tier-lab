@@ -73,3 +73,46 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 }
 
+# CloudWatch Logs/Metric 권한 (EC2가 로그를 푸시하고 메트릭을 전솔할 수 있도록)
+data "aws_iam_policy_document" "web_cw" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:DescribeLogStreams",
+      "logs:PutLogEvents"
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "web_cw" {
+  name   = "${var.name}-web-cloudwatch"
+  role   = aws_iam_role.web.id
+  policy = data.aws_iam_policy_document.web_cw.json
+}
+
+# EC2가 CloudWatch Logs/Metric 사용하도록 관리형 정책 부착
+resource "aws_iam_role_policy_attachment" "web_cw_managed" {
+  role       = aws_iam_role.web.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# describe 계열 조회 권한 보완 (리소스는 * 이어야 함)
+data "aws_iam_policy_document" "web_cw_describe" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams"
+    ]
+    resources = ["*"]  # ← 이 액션들은 리소스 지정 불가, 반드시 "*"
+  }
+}
+
+resource "aws_iam_role_policy" "web_cw_describe" {
+  name   = "${var.name}-web-cloudwatch-describe"
+  role   = aws_iam_role.web.id
+  policy = data.aws_iam_policy_document.web_cw_describe.json
+}
