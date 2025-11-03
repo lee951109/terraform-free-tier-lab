@@ -144,7 +144,18 @@ resource "aws_iam_role_policy" "web_ssm" {
   policy = data.aws_iam_policy_document.web_ssm.json
 }
 
+# -----------------------
+# GitHub Action
+# -----------------------
+module "iam_github_oidc" {
+  source = "./modules/iam-github-oidc"
 
+  github_owner   = "lee951109"
+  github_repo    = "terraform-free-tier-lab"
+  branch         = "master"
+  s3_bucket      = "free-tier-lab-tfstate-buket"
+  dynamodb_table = "tfstate-lock"
+}
 
 # -----------------------
 # 출력(확인용)

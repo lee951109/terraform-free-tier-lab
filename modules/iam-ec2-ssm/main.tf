@@ -107,7 +107,7 @@ data "aws_iam_policy_document" "web_cw_describe" {
       "logs:DescribeLogGroups",
       "logs:DescribeLogStreams"
     ]
-    resources = ["*"]  # ← 이 액션들은 리소스 지정 불가, 반드시 "*"
+    resources = ["*"] # ← 이 액션들은 리소스 지정 불가, 반드시 "*"
   }
 }
 
