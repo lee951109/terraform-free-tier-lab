@@ -113,6 +113,7 @@ resource "aws_instance" "web" {
 
   tags = merge({
     Name = "${var.name}-web"
+    Eenv = "oidc-test"
     Role = "web-server"
   }, var.tags)
 }
