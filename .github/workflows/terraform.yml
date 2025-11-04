@@ -42,8 +42,13 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init
-        run: terraform init -backend-config=backend.hcl
-
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_BACKEND_TABLE }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="key=${{ vars.TF_BACKEND_KEY }}"
+            
       - name: Terraform Fmt
         run: terraform fmt -check -recursive
 
@@ -81,7 +86,12 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init
-        run: terraform init -backend-config=backend.hcl
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_BACKEND_BUCKET }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_BACKEND_TABLE }}" \
+            -backend-config="region=${{ vars.TF_BACKEND_REGION }}" \
+            -backend-config="key=${{ vars.TF_BACKEND_KEY }}"
 
       - name: Terraform Apply
         run: terraform apply -auto-approve
